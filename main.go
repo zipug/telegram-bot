@@ -5,6 +5,7 @@ import (
 	"bot/internal/common/service/config"
 	logger "bot/internal/common/service/logger/zerolog"
 	"bot/internal/core/service/api"
+	"bot/internal/core/service/articles"
 	"bot/internal/core/service/attachments"
 	"bot/internal/core/service/minio"
 	"bot/internal/core/service/statistics"
@@ -26,10 +27,11 @@ func main() {
 	minioRepository := repo_minio.NewMinioRepository(cfg)
 	minioService := minio.NewMinioService(minioRepository)
 	postgresRepository := postgres.NewPostgresRepository(cfg)
-	api := api.NewApiService(ctx)
+	api := api.NewApiService(ctx, cfg.OpenRouterAi.Token, cfg.OpenRouterAi.Model, cfg.OpenRouterAi.URL)
 	attachmentsService := attachments.NewAttachmentService(ctx, postgresRepository)
 	statisticsService := statistics.NewStatisticsService(ctx, postgresRepository)
 	tgUsersService := telegramusers.NewTelegramUsersService(ctx, postgresRepository)
+	articlesService := articles.NewArticlesService(ctx, postgresRepository)
 	logger := logger.New(cfg.Env)
 	app := application.New(
 		ctx,
@@ -40,6 +42,7 @@ func main() {
 		api,
 		attachmentsService,
 		tgUsersService,
+		articlesService,
 		statisticsService,
 	)
 	app.Run()

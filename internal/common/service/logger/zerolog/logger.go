@@ -30,6 +30,12 @@ func WithStrAttr(key, value string) LoggerEvent {
 	}
 }
 
+func WithBoolAttr(key string, value bool) LoggerEvent {
+	return func(e *zerolog.Event) {
+		e.Bool(key, value)
+	}
+}
+
 func WithInt64Attr(key string, value int64) LoggerEvent {
 	return func(e *zerolog.Event) {
 		e.Int64(key, value)

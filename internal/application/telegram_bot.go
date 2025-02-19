@@ -19,7 +19,8 @@ import (
 
 const (
 	NoRelevantAnswer string = "no_relevant_answer"
-	TmpDir                  = "tmp"
+	AskAI            string = "ask_ai"
+	TmpDir           string = "tmp"
 )
 
 type Application struct {
@@ -29,6 +30,7 @@ type Application struct {
 	attachments ports.AttachmentsService
 	statistics  ports.StatisticsService
 	tg_users    ports.TelegramUsersService
+	articles    ports.ArticlesService
 	bot         *tgbotapi.BotAPI
 	log         *logger.Logger
 	minio       ports.MinioService
@@ -38,10 +40,11 @@ type Application struct {
 }
 
 type Action struct {
-	IsQuestion bool
-	IsAnswer   bool
-	Question   string
-	Answers    map[string]AnswerWithId
+	IsQuestion   bool
+	IsAIQuestion bool
+	IsAnswer     bool
+	Question     string
+	Answers      map[string]AnswerWithId
 }
 
 type AnswerWithId struct {
@@ -58,6 +61,7 @@ func New(
 	api ports.ApiService,
 	attachments ports.AttachmentsService,
 	tg_users ports.TelegramUsersService,
+	articles ports.ArticlesService,
 	stats ports.StatisticsService,
 ) *Application {
 	bot, err := tgbotapi.NewBotAPI(config.Telegram.BotToken)
@@ -77,6 +81,7 @@ func New(
 		attachments: attachments,
 		statistics:  stats,
 		tg_users:    tg_users,
+		articles:    articles,
 		bot:         bot,
 		log:         logger,
 		minio:       minio,
@@ -102,6 +107,13 @@ func (a *Application) Run() error {
 					update.CallbackQuery.Message.Chat.ID,
 					update.CallbackQuery.Message.MessageID,
 				)
+				continue
+			}
+			if data == AskAI {
+				del := tgbotapi.NewDeleteMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)
+				a.sendMessage(op, del)
+				a.onAskAIQuestion(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)
+				continue
 			}
 			if action, ok := a.actions[update.CallbackQuery.Message.Chat.ID]; ok {
 				a.log.Log("info", "callback data", logger.WithStrAttr("data", data), logger.WithStrAttr("content", action.Question))
@@ -112,6 +124,7 @@ func (a *Application) Run() error {
 					update.CallbackQuery.Message.Chat.ID,
 					update.CallbackQuery.Message.MessageID,
 				)
+				continue
 			}
 			continue
 		}
@@ -135,6 +148,21 @@ func (a *Application) Run() error {
 		}
 
 		if action, ok := a.actions[update.Message.Chat.ID]; ok {
+			a.log.Log(
+				"info",
+				"action",
+				logger.WithStrAttr("content", action.Question),
+				logger.WithBoolAttr("is_question", action.IsQuestion),
+				logger.WithBoolAttr("is_ai_question", action.IsAIQuestion),
+				logger.WithBoolAttr("is_answer", action.IsAnswer),
+			)
+			if action.IsAIQuestion {
+				a.messageOnAIQuestion(
+					update.Message.Chat.ID,
+					update.Message.Text,
+				)
+				continue
+			}
 			if action.IsQuestion {
 				a.messageOnQuestion(
 					update.Message.Chat.ID,
@@ -146,6 +174,11 @@ func (a *Application) Run() error {
 
 		if update.Message.Text == "✏️  Задать вопрос" {
 			a.onAskQuestion(update.Message.Chat.ID, update.Message.MessageID)
+			continue
+		}
+
+		if update.Message.Text == "🤖 Задать вопрос ИИ" {
+			a.onAskAIQuestion(update.Message.Chat.ID, update.Message.MessageID)
 			continue
 		}
 
@@ -204,11 +237,59 @@ func (a *Application) messageOnQuestion(chat_id int64, msg string) {
 		)
 		return
 	}
-	a.actions[chat_id] = Action{IsQuestion: false, IsAnswer: true, Question: msg, Answers: answers}
+	a.actions[chat_id] = Action{IsQuestion: false, IsAIQuestion: false, IsAnswer: true, Question: msg, Answers: answers}
 	new_msg := tgbotapi.NewMessage(chat_id, "*По вашему вопросу найдены следующие статьи*:\nВыберите подходящий или оставьте запрос поддержке")
 	new_msg.ReplyMarkup = a.createQuestinosKeyboard(answers)
 	new_msg.ParseMode = tgbotapi.ModeMarkdown
 	a.sendMessage(op, new_msg)
+}
+
+func (a *Application) messageOnAIQuestion(chat_id int64, msg string) {
+	const op = "application.messageOnAIQuestion"
+	chat_action := tgbotapi.NewChatAction(chat_id, "typing")
+	a.sendMessage(op, chat_action)
+	answer, err := a.api.AISearch(msg)
+	if err != nil {
+		a.log.Log(
+			"error",
+			"failed to get questions",
+			logger.WithErrAttr(err),
+			logger.WithStrAttr("op", op),
+		)
+		return
+	}
+	a.actions[chat_id] = Action{IsQuestion: false, IsAIQuestion: false, IsAnswer: false, Question: msg, Answers: nil}
+	new_msg := tgbotapi.NewMessage(chat_id, answer.Choices[0].Message.Content)
+	new_msg.ParseMode = tgbotapi.ModeMarkdown
+	a.sendMessage(op, new_msg)
+	record := models.Statistic{
+		BotId:       a.config.Container.BotId,
+		TelegramId:  chat_id,
+		Question:    msg,
+		ArticleName: "generated_by_ai:" + answer.Model,
+		IsResolved:  true,
+	}
+	if err := a.statistics.AddStatisticRecord(record); err != nil {
+		a.log.Log(
+			"error",
+			"cound not add statistic record",
+			logger.WithErrAttr(err),
+			logger.WithStrAttr("op", op),
+		)
+	}
+	if err := a.articles.CreateArticle(models.Article{
+		Name:        msg,
+		Description: "generated_by_ai:" + answer.Model,
+		Content:     answer.Choices[0].Message.Content,
+		ProjectId:   a.config.Container.ProjectId,
+	}); err != nil {
+		a.log.Log(
+			"error",
+			"cound not add article",
+			logger.WithErrAttr(err),
+			logger.WithStrAttr("op", op),
+		)
+	}
 }
 
 func (a *Application) createQuestinosKeyboard(answers map[string]AnswerWithId) *tgbotapi.InlineKeyboardMarkup {
@@ -218,7 +299,8 @@ func (a *Application) createQuestinosKeyboard(answers map[string]AnswerWithId) *
 	}
 	rows := slices.ChunkBy(btns, 2)
 	rows = append(rows, []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData("Нет подходящего ответа", NoRelevantAnswer),
+		tgbotapi.NewInlineKeyboardButtonData("❌ Нет подходящего ответа", NoRelevantAnswer),
+		tgbotapi.NewInlineKeyboardButtonData("🤖 Задать вопрос ИИ", AskAI),
 	})
 	res := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	return &res
@@ -352,9 +434,19 @@ func (a *Application) onNoRelevantAnswer(telegram_id, chat_id int64, message_id 
 
 func (a *Application) onAskQuestion(chat_id int64, message_id int) {
 	const op = "application.onAskQuestion"
-	del := tgbotapi.NewDeleteMessage(chat_id, message_id)
-	a.sendMessage(op, del)
+	/* del := tgbotapi.NewDeleteMessage(chat_id, message_id)
+	a.sendMessage(op, del) */
 	a.actions[chat_id] = Action{IsQuestion: true}
+	msg := tgbotapi.NewMessage(chat_id, "Введите ваш вопрос")
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	a.sendMessage(op, msg)
+}
+
+func (a *Application) onAskAIQuestion(chat_id int64, message_id int) {
+	const op = "application.onAskAIQuestion"
+	/* del := tgbotapi.NewDeleteMessage(chat_id, message_id)
+	a.sendMessage(op, del) */
+	a.actions[chat_id] = Action{IsAIQuestion: true}
 	msg := tgbotapi.NewMessage(chat_id, "Введите ваш вопрос")
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	a.sendMessage(op, msg)

@@ -57,14 +57,21 @@ type Button struct {
 	Data string `mapstructure:"data"`
 }
 
+type OpenRouterAi struct {
+	Token string `mapstructure:"token"`
+	Model string `mapstructure:"model"`
+	URL   string `mapstructure:"url"`
+}
+
 type TgBotConfig struct {
-	Env        ENV       `mapstructure:"env"`
-	Postgres   Postgres  `mapstructure:"postgres"`
-	MiniO      MiniO     `mapstructure:"minio"`
-	Search     Search    `mapstructure:"search"`
-	Container  Container `mapstructure:"container"`
-	Telegram   Telegram  `mapstructure:"telegram"`
-	configPath string
+	Env          ENV          `mapstructure:"env"`
+	Postgres     Postgres     `mapstructure:"postgres"`
+	MiniO        MiniO        `mapstructure:"minio"`
+	Search       Search       `mapstructure:"search"`
+	Container    Container    `mapstructure:"container"`
+	Telegram     Telegram     `mapstructure:"telegram"`
+	OpenRouterAi OpenRouterAi `mapstructure:"open_router_ai"`
+	configPath   string
 }
 
 type ENV string
@@ -110,6 +117,9 @@ func NewConfigService() *TgBotConfig {
 	viper.BindEnv("telegram.error_message", "TELEGRAM_ERROR_MESSAGE")
 	viper.BindEnv("telegram.main_image", "TELEGRAM_MAIN_IMAGE")
 	viper.BindEnv("telegram.main_buttons", "TELEGRAM_MAIN_BUTTONS")
+	viper.BindEnv("open_router_ai.token", "OPEN_ROUTER_API_TOKEN")
+	viper.BindEnv("open_router_ai.model", "OPEN_ROUTER_API_MODEL")
+	viper.BindEnv("open_router_ai.url", "OPEN_ROUTER_API_URL")
 	viper.AutomaticEnv()
 	viper.SetDefault("telegram.information_url", "")
 	viper.SetDefault("telegram.hello_message", []string{
@@ -119,7 +129,10 @@ func NewConfigService() *TgBotConfig {
 	})
 	viper.SetDefault("telegram.error_message", []string{"Если Вы не нашли ответа на свой вопрос или нуждаетесь в консультации наших технических специалистов, оставьте запрос для службы поддержки"})
 	viper.SetDefault("telegram.main_image", "")
-	viper.SetDefault("telegram.main_buttons", []Button{{Text: "✏️  Задать вопрос", Data: "ask_question"}})
+	viper.SetDefault("telegram.main_buttons", []Button{
+		{Text: "✏️  Задать вопрос", Data: "ask_question"},
+		{Text: "🤖 Задать вопрос ИИ", Data: "ask_ai"},
+	})
 
 	if err := viper.ReadInConfig(); err != nil {
 		if strings.Contains(err.Error(), "Not Found in") {
