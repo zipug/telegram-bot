@@ -7,7 +7,6 @@ import (
 	"bot/internal/core/ports"
 	"bot/internal/infrastucture/repository/postgres"
 	"bot/pkg/slices"
-	telegramhtml "bot/pkg/telegram_html"
 	"context"
 	"os"
 	"strconv"
@@ -332,9 +331,8 @@ func (a *Application) onAnswer(data string, action Action, telegram_id, chat_id 
 	del := tgbotapi.NewDeleteMessage(chat_id, message_id)
 	a.sendMessage(op, del)
 	if content, ok := action.Answers[data]; ok {
-		text_content := telegramhtml.ToTelegramHTML(content.Content)
-		msg := tgbotapi.NewMessage(chat_id, text_content)
-		msg.ParseMode = tgbotapi.ModeHTML
+		msg := tgbotapi.NewMessage(chat_id, content.Content)
+		msg.ParseMode = tgbotapi.ModeMarkdown
 		a.sendMessage(op, msg)
 		attachs, err := a.attachments.GetAllAttachmentsByArticleId(content.Id)
 		if err != nil {
@@ -411,7 +409,7 @@ func (a *Application) onNoRelevantAnswer(telegram_id, chat_id int64, message_id 
 	}
 	a.log.Log("info", "no relevant answer", logger.WithStrAttr("question", question))
 	msg := tgbotapi.NewMessage(chat_id, "Ваш запрос отправлен в службу поддержки")
-	msg.ParseMode = tgbotapi.ModeHTML
+	msg.ParseMode = tgbotapi.ModeMarkdown
 	a.sendMessage(op, msg)
 	del := tgbotapi.NewDeleteMessage(chat_id, message_id)
 	a.sendMessage(op, del)
