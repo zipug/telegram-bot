@@ -34,6 +34,12 @@ token = "sk-or-v1-eacfac38b1bac49c8799397aa92da751e784d0894fee56429a13aab9eab5a1
 model = "qwen/qwen-vl-plus:free"
 url = "https://openrouter.ai/api/v1/chat/completions"
 
+[gigachat]
+address = "gigachat.devices.sberbank.ru"
+auth_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+authorization_key = "MzIwM2RkNDEtMjJhZS00MzAyLTgzZDEtYWEzODQzZDg0ZDIxOjhkNTY2MWM0LTkxY2YtNGZiZS04NGY0LTM0NGQ2YmQ1NzM0NQ=="
+scope = "GIGACHAT_API_PERS"
+
 [telegram]
 # bot_token = "7672631119:AAEqdcBCTP1FEtS96JrVd1FU-Zc1JC8NLjo"
 bot_token = "7825041192:AAHhbiAv9Sove9-KpZApnLBtjLQUsrZ3E9c"

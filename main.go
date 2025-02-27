@@ -24,6 +24,16 @@ func main() {
 	defer stop()
 	cfg := config.NewConfigService()
 	fmt.Printf("CURRENT_CONFIG: %v", cfg)
+	/*
+		gigachatService := grpc.NewGigaChatService(
+			ctx,
+			"gigachat.devices.sberbank.ru",
+			"https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+			"MzIwM2RkNDEtMjJhZS00MzAyLTgzZDEtYWEzODQzZDg0ZDIxOjhkNTY2MWM0LTkxY2YtNGZiZS04NGY0LTM0NGQ2YmQ1NzM0NQ==",
+			"GIGACHAT_API_PERS",
+		)
+		gigachatService.Connect()
+	*/
 	minioRepository := repo_minio.NewMinioRepository(cfg)
 	minioService := minio.NewMinioService(minioRepository)
 	postgresRepository := postgres.NewPostgresRepository(cfg)
