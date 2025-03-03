@@ -1,11 +1,12 @@
 package grpc
 
 import (
+	"bot/internal/application/dto"
+	"bot/internal/core/ports"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,146 +21,178 @@ import (
 )
 
 type GigaChatService struct {
-	ctx      context.Context
-	address  string
-	auth_url string
-	auth_key string
-	bearer   string
-	scope    string
-	client   *grpc.ClientConn
-	pb.UnimplementedChatServiceServer
+	ctx          context.Context
+	repo         ports.GigaChatRepository
+	grpc_address string
+	auth_url     string
+	auth_key     string
+	bearer       string
+	scope        string
+	model        string
+	client       *grpc.ClientConn
+	giga         pb.ChatServiceClient
 }
 
-type ChatService interface {
-	Chat(context.Context, *pb.ChatRequest) (*pb.ChatResponse, error)
-	ChatStream(*pb.ChatRequest, grpc.ServerStreamingServer[pb.ChatResponse]) error
-}
-
-func NewGigaChatService(ctx context.Context, address, auth_url, auth_key, scope string) *GigaChatService {
-	return &GigaChatService{
-		ctx:      ctx,
-		address:  address,
-		auth_url: auth_url,
-		auth_key: auth_key,
-		scope:    scope,
+func NewGigaChatService(
+	ctx context.Context,
+	repo ports.GigaChatRepository,
+	grpc_address,
+	auth_url,
+	auth_key,
+	scope,
+	model string,
+) *GigaChatService {
+	service := &GigaChatService{
+		ctx:          ctx,
+		repo:         repo,
+		grpc_address: grpc_address,
+		auth_url:     auth_url,
+		auth_key:     auth_key,
+		scope:        scope,
+		model:        model,
 	}
+	if err := service.connect(); err != nil {
+		panic(err)
+	}
+	return service
 }
 
-type AuthPayload struct {
-	Mode       string     `json:"mode"`
-	Urlencoded Urlencoded `json:"urlencoded"`
-}
-
-type Urlencoded struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-type AuthResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresAt   int64  `json:"expires_at"`
-}
-
-func (g *GigaChatService) AuthGigaChat() error {
+func (g *GigaChatService) authGigaChat() error {
 	client := http.Client{}
-
 	ctx, cancel := context.WithTimeout(g.ctx, 60*time.Second)
 	defer cancel()
-
 	payload := strings.NewReader("scope=" + g.scope)
-
 	req, err := http.NewRequestWithContext(ctx, "POST", g.auth_url, payload)
 	if err != nil {
 		fmt.Println(err)
 		return err
 	}
-
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("RqUID", "6f0b1291-c7f3-43c6-bb2e-9f3efb2dc98e")
 	req.Header.Add("Authorization", "Basic "+g.auth_key)
-
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
 		return err
 	}
-	defer resp.Body.Close()
-
-	fmt.Println("authorization into the giga", resp.Body)
-
 	readBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
-
-	var res AuthResponse
+	var res dto.AuthResponse
 	if err := json.Unmarshal(readBytes, &res); err != nil {
 		return err
 	}
-
 	g.bearer = res.AccessToken
-
-	fmt.Println(res.AccessToken)
-
 	return nil
 }
 
-func (g *GigaChatService) unaryInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	// Add the Authorization header to the metadata
-	md := metadata.Pairs("authorization", "Bearer "+g.bearer)
-	ctx = metadata.NewOutgoingContext(ctx, md)
-
-	// Invoke the RPC call with the updated context
-	return invoker(ctx, method, req, reply, cc, opts...)
-}
-
-func (g *GigaChatService) Connect() (*grpc.ClientConn, error) {
-	if err := g.AuthGigaChat(); err != nil {
-		fmt.Println("Error while authorization: ", err)
-		return nil, err
-	}
-	fmt.Println(g.bearer)
+func (g *GigaChatService) connect() error {
 	caCertPool, err := x509.SystemCertPool()
 	if err != nil {
-		fmt.Println("Error while loading system cert pool: ", err)
-		return nil, err
+		return fmt.Errorf("error while loading system cert pool: %w", err)
 	}
 	creds := credentials.NewTLS(&tls.Config{
 		RootCAs: caCertPool,
 	})
-	md := metadata.Pairs("authorization", "Bearer "+g.bearer)
-	ctx := metadata.NewOutgoingContext(g.ctx, md)
 	conn, err := grpc.NewClient(
-		g.address,
+		g.grpc_address,
 		grpc.WithTransportCredentials(creds),
-		// grpc.WithUnaryInterceptor(unaryInterceptor),
 	)
 	if err != nil {
-		fmt.Println("Error while connecting to gRPC server: ", err)
+		return fmt.Errorf("error while connecting to gRPC server: %w", err)
 	}
-	defer conn.Close()
-	fmt.Println("Connected to gRPC server", conn.Target())
-	giga := pb.NewChatServiceClient(conn)
-	resp, err := giga.Chat(ctx, &pb.ChatRequest{
-		Model: "GigaChat",
-		Messages: []*pb.Message{
-			{
-				Role:    "user",
-				Content: "Привет, расскажи о себе",
-			},
-		},
-	})
+	g.client = conn
+	g.giga = pb.NewChatServiceClient(g.client)
+	return nil
+}
+
+func (g *GigaChatService) Close() {
+	g.client.Close()
+}
+
+func (g *GigaChatService) Chat(message *pb.Message, telegram_id, project_id int64) (*pb.ChatResponse, error) {
+	var messages []*pb.Message
+	if err := g.authGigaChat(); err != nil {
+		return nil, fmt.Errorf("error while authorization: %w", err)
+	}
+	md := metadata.Pairs("authorization", "Bearer "+g.bearer)
+	ctx := metadata.NewOutgoingContext(g.ctx, md)
+
+	allMessages, err := g.repo.GetAllDialogMessages(ctx, telegram_id, project_id)
 	if err != nil {
-		fmt.Println("Error while calling gRPC server: ", err)
 		return nil, err
 	}
-	alts := resp.Alternatives
-	if len(alts) == 0 {
-		fmt.Println("No alternatives found")
-		return nil, errors.New("no alternatives found")
+	if allMessages != "" && allMessages != "[]" {
+		var dbmsgs []map[string]string
+		if err := json.Unmarshal([]byte(allMessages), &dbmsgs); err != nil {
+			return nil, err
+		}
+		for _, msg := range dbmsgs {
+			var role, content string
+			for key, value := range msg {
+				if key == "role" {
+					role = value
+				}
+				if key == "content" {
+					content = value
+				}
+			}
+			messages = append(messages, &pb.Message{
+				Role:    role,
+				Content: content,
+			})
+		}
 	}
-	msg := alts[0].Message
-	fmt.Printf("%s\n", msg.Content)
-	return conn, err
+
+	userMessage := dto.GigaChatMessage{
+		Role:    message.Role,
+		Content: message.Content,
+	}
+	jsonUserMessage, err := json.Marshal(userMessage)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := g.repo.AddNewDialogMessage(
+		ctx,
+		telegram_id,
+		project_id,
+		jsonUserMessage,
+	); err != nil {
+		return nil, err
+	}
+
+	messages = append(messages, &pb.Message{
+		Role:    message.Role,
+		Content: message.Content,
+	})
+
+	resp, err := g.giga.Chat(ctx, &pb.ChatRequest{
+		Model:    g.model,
+		Messages: messages,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assistantMessage := dto.GigaChatMessage{
+		Role:    resp.Alternatives[0].Message.Role,
+		Content: resp.Alternatives[0].Message.Content,
+	}
+	jsonAssistantMessage, err := json.Marshal(assistantMessage)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := g.repo.AddNewDialogMessage(
+		ctx,
+		telegram_id,
+		project_id,
+		jsonAssistantMessage,
+	); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }

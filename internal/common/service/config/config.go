@@ -63,6 +63,14 @@ type OpenRouterAi struct {
 	URL   string `mapstructure:"url"`
 }
 
+type GigaChatAi struct {
+	GRPCAddress      string `mapstructure:"grpc_address"`
+	AuthURL          string `mapstructure:"auth_url"`
+	AuthorizationKey string `mapstructure:"authorization_key"`
+	Scope            string `mapstructure:"scope"`
+	Model            string `mapstructure:"model"`
+}
+
 type TgBotConfig struct {
 	Env          ENV          `mapstructure:"env"`
 	Postgres     Postgres     `mapstructure:"postgres"`
@@ -71,6 +79,7 @@ type TgBotConfig struct {
 	Container    Container    `mapstructure:"container"`
 	Telegram     Telegram     `mapstructure:"telegram"`
 	OpenRouterAi OpenRouterAi `mapstructure:"open_router_ai"`
+	GigaChatAi   GigaChatAi   `mapstructure:"gigachat"`
 	configPath   string
 }
 
@@ -120,6 +129,11 @@ func NewConfigService() *TgBotConfig {
 	viper.BindEnv("open_router_ai.token", "OPEN_ROUTER_API_TOKEN")
 	viper.BindEnv("open_router_ai.model", "OPEN_ROUTER_API_MODEL")
 	viper.BindEnv("open_router_ai.url", "OPEN_ROUTER_API_URL")
+	viper.BindEnv("gigachat.grpc_address", "GIGACHAT_GRPC_ADDRESS")
+	viper.BindEnv("gigachat.auth_url", "GIGACHAT_AUTH_URL")
+	viper.BindEnv("gigachat.authorization_key", "GIGACHAT_AUTHORIZATION_KEY")
+	viper.BindEnv("gigachat.scope", "GIGACHAT_SCOPE")
+	viper.BindEnv("gigachat.model", "GIGACHAT_MODEL")
 	viper.AutomaticEnv()
 	viper.SetDefault("telegram.information_url", "")
 	viper.SetDefault("telegram.hello_message", []string{

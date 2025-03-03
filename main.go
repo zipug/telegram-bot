@@ -5,6 +5,7 @@ import (
 	"bot/internal/common/service/config"
 	logger "bot/internal/common/service/logger/zerolog"
 	"bot/internal/core/service/api"
+	"bot/internal/core/service/api/grpc"
 	"bot/internal/core/service/articles"
 	"bot/internal/core/service/attachments"
 	"bot/internal/core/service/minio"
@@ -24,19 +25,18 @@ func main() {
 	defer stop()
 	cfg := config.NewConfigService()
 	fmt.Printf("CURRENT_CONFIG: %v", cfg)
-	/*
-		gigachatService := grpc.NewGigaChatService(
-			ctx,
-			"gigachat.devices.sberbank.ru",
-			"https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-			"MzIwM2RkNDEtMjJhZS00MzAyLTgzZDEtYWEzODQzZDg0ZDIxOjhkNTY2MWM0LTkxY2YtNGZiZS04NGY0LTM0NGQ2YmQ1NzM0NQ==",
-			"GIGACHAT_API_PERS",
-		)
-		gigachatService.Connect()
-	*/
 	minioRepository := repo_minio.NewMinioRepository(cfg)
 	minioService := minio.NewMinioService(minioRepository)
 	postgresRepository := postgres.NewPostgresRepository(cfg)
+	gigachatService := grpc.NewGigaChatService(
+		ctx,
+		postgresRepository,
+		cfg.GigaChatAi.GRPCAddress,
+		cfg.GigaChatAi.AuthURL,
+		cfg.GigaChatAi.AuthorizationKey,
+		cfg.GigaChatAi.Scope,
+		cfg.GigaChatAi.Model,
+	)
 	api := api.NewApiService(ctx, cfg.OpenRouterAi.Token, cfg.OpenRouterAi.Model, cfg.OpenRouterAi.URL)
 	attachmentsService := attachments.NewAttachmentService(ctx, postgresRepository)
 	statisticsService := statistics.NewStatisticsService(ctx, postgresRepository)
@@ -50,6 +50,7 @@ func main() {
 		minioService,
 		postgresRepository,
 		api,
+		gigachatService,
 		attachmentsService,
 		tgUsersService,
 		articlesService,
@@ -58,6 +59,7 @@ func main() {
 	app.Run()
 	select {
 	case <-ctx.Done():
+		gigachatService.Close()
 		fmt.Println("shutting down...")
 	}
 }

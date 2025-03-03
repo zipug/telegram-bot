@@ -1,6 +1,6 @@
 [postgres]
 host = "localhost"
-port = 5432
+port = 5439
 user = "usr"
 password = "pwd"
 db_name = "db"
@@ -35,10 +35,12 @@ model = "qwen/qwen-vl-plus:free"
 url = "https://openrouter.ai/api/v1/chat/completions"
 
 [gigachat]
-address = "gigachat.devices.sberbank.ru"
+grpc_address = "gigachat.devices.sberbank.ru"
 auth_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 authorization_key = "MzIwM2RkNDEtMjJhZS00MzAyLTgzZDEtYWEzODQzZDg0ZDIxOjhkNTY2MWM0LTkxY2YtNGZiZS04NGY0LTM0NGQ2YmQ1NzM0NQ=="
 scope = "GIGACHAT_API_PERS"
+model = "GigaChat"
+# GigaChat-Max
 
 [telegram]
 # bot_token = "7672631119:AAEqdcBCTP1FEtS96JrVd1FU-Zc1JC8NLjo"

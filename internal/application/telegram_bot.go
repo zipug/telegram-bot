@@ -14,6 +14,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/minio/minio-go/v7"
+	pb "github.com/zipug/protos/gen/go/gigachat"
 )
 
 const (
@@ -26,6 +27,7 @@ type Application struct {
 	ctx         context.Context
 	config      *config.TgBotConfig
 	api         ports.ApiService
+	gigachat    ports.GigaChatService
 	attachments ports.AttachmentsService
 	statistics  ports.StatisticsService
 	tg_users    ports.TelegramUsersService
@@ -58,6 +60,7 @@ func New(
 	minio ports.MinioService,
 	db *postgres.PostgresRepository,
 	api ports.ApiService,
+	gigachat ports.GigaChatService,
 	attachments ports.AttachmentsService,
 	tg_users ports.TelegramUsersService,
 	articles ports.ArticlesService,
@@ -77,6 +80,7 @@ func New(
 		ctx:         ctx,
 		config:      config,
 		api:         api,
+		gigachat:    gigachat,
 		attachments: attachments,
 		statistics:  stats,
 		tg_users:    tg_users,
@@ -146,6 +150,16 @@ func (a *Application) Run() error {
 			}
 		}
 
+		if update.Message.Text == "✏️  Задать вопрос" {
+			a.onAskQuestion(update.Message.Chat.ID, update.Message.MessageID)
+			continue
+		}
+
+		if update.Message.Text == "🤖 Задать вопрос ИИ" {
+			a.onAskAIQuestion(update.Message.Chat.ID, update.Message.MessageID)
+			continue
+		}
+
 		if action, ok := a.actions[update.Message.Chat.ID]; ok {
 			a.log.Log(
 				"info",
@@ -170,17 +184,6 @@ func (a *Application) Run() error {
 				continue
 			}
 		}
-
-		if update.Message.Text == "✏️  Задать вопрос" {
-			a.onAskQuestion(update.Message.Chat.ID, update.Message.MessageID)
-			continue
-		}
-
-		if update.Message.Text == "🤖 Задать вопрос ИИ" {
-			a.onAskAIQuestion(update.Message.Chat.ID, update.Message.MessageID)
-			continue
-		}
-
 	}
 
 	return nil
@@ -213,13 +216,25 @@ func (a *Application) messageOnStart(chat_id int64, user *tgbotapi.User) {
 		Username:   user.UserName,
 		ChatId:     chat_id,
 	}
-	if err := a.tg_users.AddTelegramUser(usr); err != nil {
+	if err := a.tg_users.AddTelegramUser(usr, a.config.Container.ProjectId); err != nil {
 		a.log.Log(
 			"error",
 			"cound not add telegram user",
 			logger.WithErrAttr(err),
 		)
 	}
+}
+
+func splitString(s string, chunkSize int) []string {
+	var chunks []string
+	for i := 0; i < len(s); i += chunkSize {
+		end := i + chunkSize
+		if end > len(s) {
+			end = len(s)
+		}
+		chunks = append(chunks, string(s[i:end]))
+	}
+	return chunks
 }
 
 func (a *Application) messageOnQuestion(chat_id int64, msg string) {
@@ -247,7 +262,15 @@ func (a *Application) messageOnAIQuestion(chat_id int64, msg string) {
 	const op = "application.messageOnAIQuestion"
 	chat_action := tgbotapi.NewChatAction(chat_id, "typing")
 	a.sendMessage(op, chat_action)
-	answer, err := a.api.AISearch(msg)
+	// resp, err := a.api.AISearch(msg)
+	resp, err := a.gigachat.Chat(
+		&pb.Message{
+			Role:    "user",
+			Content: msg,
+		},
+		chat_id,
+		a.config.Container.ProjectId,
+	)
 	if err != nil {
 		a.log.Log(
 			"error",
@@ -257,15 +280,37 @@ func (a *Application) messageOnAIQuestion(chat_id int64, msg string) {
 		)
 		return
 	}
-	a.actions[chat_id] = Action{IsQuestion: false, IsAIQuestion: false, IsAnswer: false, Question: msg, Answers: nil}
-	new_msg := tgbotapi.NewMessage(chat_id, answer.Choices[0].Message.Content)
-	new_msg.ParseMode = tgbotapi.ModeMarkdown
-	a.sendMessage(op, new_msg)
+	raw_answer := resp.Alternatives[0].Message.Content
+	var answer string
+	for _, str := range strings.Split(raw_answer, "\n") {
+		if strings.HasPrefix(str, "## ") || strings.HasPrefix(str, "### ") || strings.HasPrefix(str, "#### ") {
+			formated := strings.ReplaceAll(str, "#", "")
+			formated = strings.ReplaceAll(formated, "\n", "")
+			formated = strings.TrimSpace(formated)
+			answer += "*" + formated + "*\n"
+			continue
+		}
+		answer += str + "\n"
+	}
+	// answer := resp.Choices[0].Message.Content
+	a.actions[chat_id] = Action{IsQuestion: false, IsAIQuestion: true, IsAnswer: false, Question: msg, Answers: nil}
+	if len(answer) > 4096 {
+		splitted := splitString(answer, 4096)
+		for _, part := range splitted {
+			part_msg := tgbotapi.NewMessage(chat_id, part)
+			part_msg.ParseMode = tgbotapi.ModeMarkdown
+			a.sendMessage(op, part_msg)
+		}
+	} else {
+		new_msg := tgbotapi.NewMessage(chat_id, answer)
+		new_msg.ParseMode = tgbotapi.ModeMarkdown
+		a.sendMessage(op, new_msg)
+	}
 	record := models.Statistic{
 		BotId:       a.config.Container.BotId,
 		TelegramId:  chat_id,
 		Question:    msg,
-		ArticleName: "generated_by_ai:" + answer.Model,
+		ArticleName: "generated_by_ai:" + a.config.GigaChatAi.Model, // answer.Model,
 		IsResolved:  true,
 	}
 	if err := a.statistics.AddStatisticRecord(record); err != nil {
@@ -276,10 +321,10 @@ func (a *Application) messageOnAIQuestion(chat_id int64, msg string) {
 			logger.WithStrAttr("op", op),
 		)
 	}
-	if err := a.articles.CreateArticle(models.Article{
+	/*if err := a.articles.CreateArticle(models.Article{
 		Name:        msg,
-		Description: "generated_by_ai:" + answer.Model,
-		Content:     answer.Choices[0].Message.Content,
+		Description: "generated_by_ai:" + a.config.GigaChatAi.Model, // answer.Model,
+		Content:     answer,
 		ProjectId:   a.config.Container.ProjectId,
 	}); err != nil {
 		a.log.Log(
@@ -288,7 +333,7 @@ func (a *Application) messageOnAIQuestion(chat_id int64, msg string) {
 			logger.WithErrAttr(err),
 			logger.WithStrAttr("op", op),
 		)
-	}
+	}*/
 }
 
 func (a *Application) createQuestinosKeyboard(answers map[string]AnswerWithId) *tgbotapi.InlineKeyboardMarkup {
@@ -331,9 +376,19 @@ func (a *Application) onAnswer(data string, action Action, telegram_id, chat_id 
 	del := tgbotapi.NewDeleteMessage(chat_id, message_id)
 	a.sendMessage(op, del)
 	if content, ok := action.Answers[data]; ok {
-		msg := tgbotapi.NewMessage(chat_id, content.Content)
-		msg.ParseMode = tgbotapi.ModeMarkdown
-		a.sendMessage(op, msg)
+		if len(content.Content) > 4096 {
+			splitted := splitString(content.Content, 4096)
+			for _, part := range splitted {
+				part_msg := tgbotapi.NewMessage(chat_id, part)
+				part_msg.ParseMode = tgbotapi.ModeMarkdown
+				a.sendMessage(op, part_msg)
+			}
+		} else {
+			new_msg := tgbotapi.NewMessage(chat_id, content.Content)
+			new_msg.ParseMode = tgbotapi.ModeMarkdown
+			a.sendMessage(op, new_msg)
+		}
+		a.actions[telegram_id] = Action{IsQuestion: false, IsAIQuestion: false, IsAnswer: false}
 		attachs, err := a.attachments.GetAllAttachmentsByArticleId(content.Id)
 		if err != nil {
 			a.log.Log(
@@ -411,6 +466,7 @@ func (a *Application) onNoRelevantAnswer(telegram_id, chat_id int64, message_id 
 	msg := tgbotapi.NewMessage(chat_id, "Ваш запрос отправлен в службу поддержки")
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	a.sendMessage(op, msg)
+	a.actions[telegram_id] = Action{IsQuestion: false, IsAIQuestion: false, IsAnswer: false}
 	del := tgbotapi.NewDeleteMessage(chat_id, message_id)
 	a.sendMessage(op, del)
 	record := models.Statistic{

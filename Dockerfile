@@ -1,9 +1,15 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine
 
 ARG CGO_ENABLED=0
 ARG GOOS=linux
 ARG GOARCH=amd64
 WORKDIR /app
+
+COPY ./configs/certs/russian_trusted_root_ca_pem.crt /usr/local/share/ca-certificates/
+COPY ./configs/certs/russian_trusted_sub_ca_2024_pem.crt /usr/local/share/ca-certificates/
+COPY ./configs/certs/russian_trusted_sub_ca_pem.crt /usr/local/share/ca-certificates/
+
+RUN update-ca-certificates
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -13,10 +19,5 @@ WORKDIR /app/
 RUN go get -v ./... \
   && go install -v ./... \
   && go build -v -o tgbot
-
-FROM scratch AS production
-
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app/tgbot /app/tgbot
 
 ENTRYPOINT [ "/app/tgbot" ]

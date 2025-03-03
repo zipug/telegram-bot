@@ -17,9 +17,9 @@ func NewTelegramUsersService(ctx context.Context, repo ports.TelegramUsersReposi
 	return &TelegramUsersService{ctx: ctx, repo: repo}
 }
 
-func (t *TelegramUsersService) AddTelegramUser(user models.Telegram) error {
+func (t *TelegramUsersService) AddTelegramUser(user models.Telegram, project_id int64) error {
 	dbo := dto.ToDbo(user)
-	id, err := t.repo.AddTelegramUser(t.ctx, dbo)
+	id, err := t.repo.AddTelegramUser(t.ctx, dbo, project_id)
 	if err != nil {
 		return err
 	}
