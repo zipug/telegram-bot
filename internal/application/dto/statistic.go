@@ -14,6 +14,7 @@ type StatisticDto struct {
 	ArticleName string         `db:"article_name"`
 	IsResolved  bool           `db:"is_resolved"`
 	CreatedAt   sql.NullTime   `db:"created_at"`
+	ParentId    sql.NullInt64  `db:"parent_id,omitempty"`
 }
 
 func (d StatisticDto) ToValue() models.Statistic {
@@ -24,6 +25,7 @@ func (d StatisticDto) ToValue() models.Statistic {
 		Question:    d.Question.String,
 		ArticleName: d.ArticleName,
 		IsResolved:  d.IsResolved,
+		ParentId:    d.ParentId.Int64,
 	}
 }
 
@@ -35,5 +37,6 @@ func ToStatisticDbo(s models.Statistic) StatisticDto {
 		Question:    sql.NullString{String: s.Question, Valid: true},
 		ArticleName: s.ArticleName,
 		IsResolved:  s.IsResolved,
+		ParentId:    sql.NullInt64{Int64: s.ParentId, Valid: true},
 	}
 }

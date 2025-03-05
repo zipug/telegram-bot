@@ -75,6 +75,7 @@ func (g *GigaChatService) authGigaChat() error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	readBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err

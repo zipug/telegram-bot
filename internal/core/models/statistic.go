@@ -7,4 +7,5 @@ type Statistic struct {
 	Question    string
 	ArticleName string
 	IsResolved  bool
+	ParentId    int64
 }
